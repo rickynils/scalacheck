@@ -50,6 +50,27 @@ object codegen {
   def fntype(i: Int) =
     s"(${types(i)}) => Z"
   
+  def shrinkTuple(i: Int): String =
+    s"""|  /** Shrink instance of ${i}-tuple */
+        |  implicit def shrinkTuple${i}[
+        |    ${shrinkTypes(i)}
+        |  ]: Shrink[(${types(i)})] =
+        |    Shrink { case (${vals(i)}) =>
+        |      ${shrinkEachComponentOneByOne(i)}
+        |    }""".stripMargin
+
+  def shrinkTypes(n: Int): String =
+    (1 to n).map(i => s"T${i}:Shrink").mkString(", ")
+
+  def shrinkEachComponentOneByOne(n: Int): String =
+    (1 to n).map(shrinkSingleComponent(n, _)).mkString(" append\n      ")
+
+  def shrinkSingleComponent(n: Int, i: Int): String =
+    s"""Shrink.shrink(t${i}).map((${partialShrinkTuple(n, i)}))"""
+
+  def partialShrinkTuple(n: Int, i: Int): String =
+    (1 to n).map(k => if (k == i) "_" else s"t${k}").mkString(", ")
+
   def arbfn(i: Int) = s"""
     |  /** Arbitrary instance of Function${i} */
     |  implicit def arbFunction${i}[${types(i)},Z](implicit g: Arbitrary[Z], ${coImplicits(i)}): Arbitrary[${fntype(i)}] =
@@ -158,6 +179,20 @@ object codegen {
   }
   
   val genAll: Seq[GeneratedFile] = Seq(
+    GeneratedFile(
+      "ShrinkArities.scala",
+      s"""/**
+          |Defines implicit [[org.scalacheck.Shrink]] instances for tuples
+          |
+          |Auto-generated using project/codegen.scala
+          |*/
+          |package org.scalacheck
+          |
+          |private[scalacheck] trait ShrinkArities{
+          |
+          |${2 to 22 map shrinkTuple mkString("\n\n")}
+          |}
+          |""".stripMargin),
     GeneratedFile(
       "ArbitraryArities.scala",
       s"""/**

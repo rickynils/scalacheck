@@ -102,6 +102,40 @@ object ShrinkSpecification extends Properties("Shrink") {
     shrink(e).forall(_.isRight)
   }
 
+  property("shrink[Unit].isEmpty") = Prop(shrink(()).isEmpty)
+
+  // Tuples shrink even when one component doesn't
+  property("shrink[(T, Unit)] eqv shrink[T]") =
+    forAllNoShrink { (u: Unit, i: Int) =>
+      shrink(((), i)) == shrink(i).map(((), _))
+    }
+
+  property("shrink[(Unit, T)] eqv shrink[T]") =
+    forAllNoShrink { (i: Int, u: Unit) =>
+      shrink((i, ())) == shrink(i).map((_, ()))
+    }
+
+  // Tuple shrinking is associative* for all arities, and can be inductively
+  // defined for n in terms of 2 and n-1. (* modulo ordering)
+  def eqvTupleShrinks[T: Ordering](xs: Stream[T], ys: Stream[T]): Boolean =
+    xs.toList.sorted == ys.toList.sorted
+
+  property("shrink[(T, U, V)] eqv shrink[(T, (U, V))]") =
+    forAllNoShrink { (b: Byte, c: Char, s: Short) =>
+      eqvTupleShrinks(
+        shrink((b, c, s)),
+        shrink((b, (c, s))).map { case (b, (c, s)) => (b, c, s) }
+      )
+    }
+
+  property("shrink[(T, U, V, W)] eqv shrink[((T, U, V), W)]") =
+    forAllNoShrink { (b: Byte, c: Char, s: Short, i: Int) =>
+      eqvTupleShrinks(
+        shrink((b, c, s, i)),
+        shrink(((b, c, s), i)).map { case ((b, c, s), i) => (b, c, s, i) }
+      )
+    }
+
   property("suchThat") = {
     implicit def shrinkEvenLength[A]: Shrink[List[A]] =
       Shrink.shrinkContainer[List,A].suchThat(evenLength _)
@@ -116,7 +150,7 @@ object ShrinkSpecification extends Properties("Shrink") {
   def shrinkEvenLength[A]: Shrink[List[A]] =
     Shrink.shrinkContainer[List,A].suchThat(evenLength _)
 
-  property("shrink[List[Int].suchThat") = {
+  property("shrink[List[Int]].suchThat") = {
     forAll { (l: List[Int]) =>
       shrink(l)(shrinkEvenLength).forall(evenLength _)
     }
