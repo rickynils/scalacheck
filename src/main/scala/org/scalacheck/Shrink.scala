@@ -238,26 +238,31 @@ object Shrink extends ShrinkLowPriority with ShrinkVersionSpecific with time.Jav
 }
 
 final class ShrinkIntegral[T](implicit ev: Integral[T]) extends Shrink[T] {
-  import ev.{ fromInt, gteq, quot, negate, equiv, zero, one }
+  import ev.{ fromInt, quot, negate, equiv, zero, lt, minus }
 
   val two = fromInt(2)
 
-  // see if T supports negative values or not. this makes some
-  // assumptions about how Integral[T] is defined, which work for
-  // Integral[Char] at least. we can't be sure user-defined
-  // Integral[T] instances will be reasonable.
-  val skipNegation = gteq(negate(one), one)
+  // We shrink x to ceil(x * (1 - 1/2^i)) for i = 0,1,….  We also shrink x
+  // to -x if x < 0 < -x (implying x != MinValue for two's complement types).
 
-  // assumes x is non-zero.
-  private def halves(x: T): Stream[T] = {
-    val q = quot(x, two)
-    if (equiv(q, zero)) Stream(zero)
-    else if (skipNegation) q #:: halves(q)
-    else q #:: negate(q) #:: halves(q)
+  // We assume that x - ((((x/2)/2)/...)/2) = x for some repetition count;
+  // otherwise shrinking may diverge.  It holds if x - 0 = x and 0 is closer
+  // to x/2 than to x and there are finitely many values y such that 0 is
+  // closer to y than to x: then the sequence x, x/2, (x/2)/2, ... eventually
+  // arrives at 0, but then (x - x/2/2/.../2) = x - 0 = x.
+
+  private def bisectFromZeroToX(x: T, current: T): Stream[T] = {
+    val head = minus(x, current)
+
+    if (equiv(head, x)) Stream.empty
+    else head #:: bisectFromZeroToX(x, quot(current, two))
   }
 
-  def shrink(x: T): Stream[T] =
-    if (equiv(x, zero)) Stream.empty[T] else halves(x)
+  def shrink(x: T): Stream[T] = {
+    lazy val approach = bisectFromZeroToX(x, x)
+    if (lt(x, zero) && lt(zero, negate(x))) negate(x) #:: approach
+    else approach
+  }
 }
 
 final class ShrinkFractional[T](implicit ev: Fractional[T]) extends Shrink[T] {

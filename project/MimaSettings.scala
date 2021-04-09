@@ -19,6 +19,7 @@ object MimaSettings {
   )
 
   private def removedPrivateMethods = Seq(
+    "org.scalacheck.ShrinkIntegral.skipNegation"
   )
 
   private def removedPrivateClasses = Seq(
