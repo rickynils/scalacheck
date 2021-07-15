@@ -276,6 +276,34 @@ trait Commands {
 
     Shrink.shrinkWithOrig[State](as.s)(shrinkState) flatMap { state =>
       shrinkedCmds.map(_.copy(s = state))
+    } map { as => ensurePreconditions(as) }
+  }
+
+  private def ensurePreconditions(a: Actions): Actions = {
+    def filterCommandSequence(s: State, commands: Commands): Commands =
+      commands match {
+        case cmd :: cmds =>
+          if (cmd.preCondition(s))
+            cmd :: filterCommandSequence(cmd.nextState(s), cmds)
+          else
+            filterCommandSequence(s, cmds)
+        case Nil => Nil
+      }
+
+    val filteredSequentialCommands = filterCommandSequence(a.s, a.seqCmds)
+    val stateAfterSequentialCommands = filteredSequentialCommands
+      .foldLeft(a.s) { case (st, cmd) => cmd.nextState(st) }
+
+    val filteredParallelCommands = a.parCmds.map(commands => {
+      filterCommandSequence(stateAfterSequentialCommands, commands)
+    }).filter(_.nonEmpty)
+
+    filteredParallelCommands match {
+      case List(singleThreadedContinuation) =>
+        val seqCmds = filteredSequentialCommands ++ singleThreadedContinuation
+        Actions(a.s, seqCmds, Nil)
+      case _ =>
+        Actions(a.s, filteredSequentialCommands, filteredParallelCommands)
     }
   }
 
