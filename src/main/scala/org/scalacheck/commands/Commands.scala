@@ -262,6 +262,24 @@ trait Commands {
     * [[State]].  By default no shrinking is done for [[State]]. */
   def shrinkState: Shrink[State] = implicitly
 
+  /** Override this to provide a custom Shrinker for your internal
+    * [[Command]].  By default no shrinking is done for [[Command]]. */
+  def shrinkCommand: Shrink[Command] = implicitly
+
+  /** Override this to provide a custom Shrinker of sequential [[Command]]s.
+    * By default, the implicit List shrinker is used with [[shrinkCommand]]. */
+  def shrinkSequentialCommands: Shrink[List[Command]] = {
+    implicit val commandShrinker = shrinkCommand
+    implicitly
+  }
+
+  /** Override this to provide a custom Shrinker of parallel [[Command]]s.
+    * By default, the implict List shrinker is used with [[shrinkCommand]]. */
+  def shrinkParallelCommands: Shrink[List[List[Command]]] = {
+    implicit val commandShrinker = shrinkCommand
+    implicitly
+  }
+
   // Private methods //
   private type Commands = List[Command]
 
@@ -270,12 +288,38 @@ trait Commands {
   )
 
   private implicit val shrinkActions: Shrink[Actions] = Shrink[Actions] { as =>
-    val shrinkedCmds: Stream[Actions] =
-      Shrink.shrink(as.seqCmds).map(cs => as.copy(seqCmds = cs)) append
-      Shrink.shrink(as.parCmds).map(cs => as.copy(parCmds = cs))
+    (
+      Shrink.shrink(as.s      )(shrinkState             ).map(s2 => as.copy(s       = s2)) append
+      Shrink.shrink(as.seqCmds)(shrinkSequentialCommands).map(cs => as.copy(seqCmds = cs)) append
+      Shrink.shrink(as.parCmds)(shrinkParallelCommands  ).map(cs => as.copy(parCmds = cs))
+    ).map(actions => removeInvalidCommands(actions.s, actions.seqCmds, actions.parCmds))
+  }
 
-    Shrink.shrinkWithOrig[State](as.s)(shrinkState) flatMap { state =>
-      shrinkedCmds.map(_.copy(s = state))
+  private def removeInvalidCommands(state: State, seqCmds: Commands, parCmds: List[Commands]): Actions = {
+
+    def filterCommandSequence(s: State, cmds: Commands): Commands = cmds match {
+      case c :: cs =>
+        if (c.preCondition(s))
+          c :: filterCommandSequence(c.nextState(s), cs)
+        else
+          filterCommandSequence(s, cs)
+      case Nil => Nil
+    }
+
+    val filteredSequentialCommands = filterCommandSequence(state, seqCmds)
+    val stateAfterSequentialCommands = filteredSequentialCommands.foldLeft(state) {
+      case (st, cmd) => cmd.nextState(st)
+    }
+
+    val filteredParallelCommands = parCmds.map(cmds => {
+      filterCommandSequence(stateAfterSequentialCommands, cmds)
+    }).filter(_.nonEmpty)
+
+    filteredParallelCommands match {
+      case List(singleThreadedContinuation) =>
+        Actions(state, filteredSequentialCommands ++ singleThreadedContinuation, Nil)
+      case _ =>
+        Actions(state, filteredSequentialCommands, filteredParallelCommands)
     }
   }
 
